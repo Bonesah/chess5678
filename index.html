@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Chess 5678 — Persistent Prototype</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{--bg:#fafafa;--card:#fff;--muted:#6b7280;--accent:#10b981}
+  body{font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);margin:0;padding:18px;display:flex;justify-content:center;}
+  .wrap{max-width:1100px;width:100%;display:grid;grid-template-columns:420px 1fr;gap:18px;}
+  .panel{background:var(--card);border-radius:12px;padding:14px;box-shadow:0 6px 18px rgba(16,24,40,0.06)}
+  h1{margin:0 0 8px;font-size:20px}
+  .hud{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .badge{background:#f3f4f6;padding:6px 10px;border-radius:999px;font-size:13px;color:#111}
+  #board{display:inline-grid;gap:2px;border-radius:8px;background:transparent}
+  /* ↑ increased glyph size by ~50% (24px -> 36px) */
+  .cell{width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:36px;cursor:pointer;user-select:none;border-radius:6px}
+  .light{background:#f8faf9}
+  /* color flip FIX: no text color on dark squares */
+  .dark{background:#034d3a}
+  .sel{outline:4px solid #fde68a}
+  .trail{box-shadow: inset 0 0 0 3px rgba(16,185,129,.25);}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  button{padding:8px 10px;border-radius:10px;border:0;background:#111;color:#fff;cursor:pointer}
+  button.ghost{background:#fff;color:#111;border:1px solid #e5e7eb}
+  .small{font-size:13px;padding:6px 8px}
+  .shop{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px}
+  .muted{color:var(--muted);font-size:13px}
+  .row{display:flex;gap:8px;align-items:center}
+  .center{display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .inv{display:flex; gap:6px; flex-wrap:wrap; margin-top:6px}
+  .pill{border:1px solid #e5e7eb; padding:4px 8px; border-radius:999px; background:#fff; display:flex; gap:6px; align-items:center}
+  .pill button{padding:2px 6px; font-size:12px}
+
+  /* Phase banner (top) */
+  #phaseBanner{ position:fixed; left:50%; top:16px; transform:translateX(-50%); background:#111; color:#fff;
+    padding:10px 16px; border-radius:999px; box-shadow:0 8px 24px rgba(0,0,0,.18); opacity:0; pointer-events:none; transition:opacity .25s ease; z-index:50 }
+  #phaseBanner.show{ opacity:1 }
+
+  /* Check text (under board) */
+  #checkText{ margin-top:8px; font-weight:600; color:#ef4444; min-height:24px; opacity:0; transition:opacity .15s ease }
+  #checkText.show{ opacity:1 }
+
+  /* Win animation */
+  .confetti{position:fixed;left:0;top:0;right:0;bottom:0;pointer-events:none;overflow:hidden}
+  .confetti span{position:absolute;font-size:22px;animation:fall 1200ms linear forwards}
+  @keyframes fall{
+    from{transform:translateY(-40px) rotate(0deg); opacity:1}
+    to{transform:translateY(110vh) rotate(360deg); opacity:.1}
+  }
+  /* Sparkles for checkmate (round) */
+  .sparkles{position:fixed;left:0;top:0;right:0;bottom:0;pointer-events:none;overflow:hidden}
+  .sparkles span{position:absolute;font-size:18px;animation:fall 900ms linear forwards}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- Left: HUD + Shop -->
+  <div class="panel">
+    <h1>Chess 5678 (Prototype)</h1>
+
+    <div class="hud">
+      <div class="badge" id="hudRound">Round 1 · 5×5</div>
+      <div class="badge" id="hudPhase">Phase: BUY</div>
+      <div class="badge" id="hudCoins">Coins: 5 (you) · 5 (AI)</div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <div style="flex:1">
+        <div class="muted">Player HP</div>
+        <div class="row"><div class="badge" id="hpPlayer">5</div></div>
+      </div>
+      <div style="flex:1">
+        <div class="muted">AI HP</div>
+        <div class="row"><div class="badge" id="hpAI">5</div></div>
+      </div>
+    </div>
+
+    <div class="muted">Chess Piece Limit = <span id="capNow">8</span></div>
+    <div class="shop" id="shop"></div>
+
+    <div style="height:10px"></div>
+
+    <div class="muted">Your Inventory</div>
+    <div id="invPlayer" class="inv"></div>
+
+    <div class="muted" style="margin-top:10px">AI Inventory</div>
+    <div id="invAI" class="inv"></div>
+
+    <div class="controls">
+      <button id="btnNext" class="small">Next Phase</button>
+      <button id="btnReset" class="small ghost">Reset Game</button>
+    </div>
+  </div>
+
+  <!-- Right: Board -->
+  <div class="panel center">
+    <div id="boardWrap">
+      <div id="board"></div>
+    </div>
+    <div id="checkText"></div>
+    <div style="height:10px"></div>
+    <div class="row" style="gap:16px">
+      <div class="center">
+        <div class="muted">Turn</div>
+        <div id="turnLabel" class="badge">white</div>
+      </div>
+      <div class="center">
+        <div class="muted">Timer (you)</div>
+        <div id="timerPlayer" class="badge">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="phaseBanner">PLACEMENT</div>
+<div id="confetti" class="confetti"></div>
+<div id="sparkles" class="sparkles"></div>
+
+<script>
+/* ----------------- Config ----------------- */
+const ROUND_SIZES = [5,6,7,8];                  // start 5×5
+const STARTING_HEALTH = 5;                       // max 5
+const BASE_TIME_BY_SIZE = {5:45,6:60,7:75,8:90}; // display only
+const TIME_BUNDLE_SECONDS = 20;                  // +20s per buy
+
+/* Shop with updated SELL values (1 less than buy) */
+const SHOP = [
+  { id:'P', label:'Pawn',  cost:1, half:0, gives:{piece:'P'} },
+  { id:'N', label:'Knight',cost:3, half:2, gives:{piece:'N'} },
+  { id:'B', label:'Bishop',cost:3, half:2, gives:{piece:'B'} },
+  { id:'R', label:'Rook',  cost:5, half:4, gives:{piece:'R'} },
+  { id:'Q', label:'Queen', cost:9, half:8, gives:{piece:'Q'} },
+  { id:'TIME', label:'+20s', cost:1, half:0, gives:{time:TIME_BUNDLE_SECONDS} },
+  { id:'ROW',  label:'Expand row', cost:2, half:1, gives:{expand:1} },
+];
+
+const GLYPH = { K:'♔', Q:'♕', R:'♖', B:'♗', N:'♘', P:'♙', k:'♚', q:'♛', r:'♜', b:'♝', n:'♞', p:'♟' };
+const PV = {K:1000,Q:9,R:5,B:3,N:3,P:1};
+
+/* Round-based HP deltas */
+function hpDeltas(idx, outcome){
+  if(outcome==='win') return {w:+1,l:0,t:0};
+  if(outcome==='loss'){
+    const map=[-1,-2,-3,-4,-5];
+    return {w:0,l:map[Math.min(idx,4)],t:0};
+  }
+  if(outcome==='tie'){
+    const map=[-1,-1,-1,-2,-2];
+    const d=map[Math.min(idx,4)];
+    return {w:0,l:0,t:d};
+  }
+  return {w:0,l:0,t:0};
+}
+
+/* Coins & placement cap by round */
+function coinsForRound(i){ return [5,6,7,8][i] ?? 5; }  // R5+ = 5
+function capForRound(i){ return [8,10,12,14][i] ?? 16; } // R5+ = 16
+
+/* ----------------- State ----------------- */
+let roundIdx = 0;
+let boardSize = ROUND_SIZES[roundIdx];
+let phase = 'buy'; // buy | placement | chess | results
+
+// Persistence: owned (permanent), inv (per-round availability)
+let owned = { player:['K','P'], ai:['K','P'] };
+let inv   = { player:[], ai:[] };
+let coins = { player:5, ai:5 };
+let expandRows = { player:0, ai:0 };
+let bonusTime  = { player:0, ai:0 };
+
+let playerHP = STARTING_HEALTH, aiHP = STARTING_HEALTH;
+let cap = capForRound(roundIdx);
+
+let board = []; // board[y][x] = {type:'KQRBNP', owner:'player'|'ai'} | null
+let placing = null;
+let selected = null; // {x,y}
+let lastFrom = null, lastTo = null; // move trail
+let turn = 'w';
+
+// Placement alternation
+let placementTurn = 'player';
+let placementQuota = 1;
+
+// Threefold repetition
+let repMap = new Map();
+
+/* ----------------- Helpers ----------------- */
+function inBounds(x,y){ return x>=0 && y>=0 && x<boardSize && y<boardSize; }
+function sideOf(p){ return p.owner==='player' ? 'w' : 'b'; }
+function glyphFor(p){ return p ? (sideOf(p)==='w'? GLYPH[p.type] : GLYPH[p.type.toLowerCase()]) : ''; }
+function resetSubBoard(size){ boardSize=size; board=Array.from({length:size},()=>Array.from({length:size},()=>null)); }
+function makePiece(owner, type){ const obj={owner,type}; return Object.freeze?Object.freeze(obj):obj; }
+function oppColor(c){ return c==='w' ? 'b' : 'w'; }
+
+function setHUD(){
+  document.getElementById('hudRound').textContent = `Round ${roundIdx+1} · ${boardSize}×${boardSize}`;
+  document.getElementById('hudPhase').textContent = `Phase: ${phase.toUpperCase()}`;
+  document.getElementById('hudCoins').textContent = `Coins: ${coins.player} (you) · ${coins.ai} (AI)`;
+  document.getElementById('hpPlayer').textContent = playerHP;
+  document.getElementById('hpAI').textContent = aiHP;
+  document.getElementById('capNow').textContent = cap;
+  document.getElementById('turnLabel').textContent = (turn==='w'?'white':'black');
+  document.getElementById('timerPlayer').textContent = `${BASE_TIME_BY_SIZE[boardSize] + bonusTime.player}s`;
+}
+function showBanner(txt){
+  const b=document.getElementById('phaseBanner');
+  b.textContent = txt;
+  b.classList.add('show');
+  setTimeout(()=>b.classList.remove('show'), 900);
+}
+function showCheck(show){
+  const el=document.getElementById('checkText');
+  if(show){ el.textContent='CHECK!'; el.classList.add('show'); }
+  else { el.textContent=''; el.classList.remove('show'); }
+}
+
+/* ----------------- Shop & Inventory (owned vs inv) ----------------- */
+function rebuildInventoryFromOwned(){
+  inv.player = [...owned.player];
+  inv.ai     = [...owned.ai];
+}
+function renderShop(){
+  const shopEl = document.getElementById('shop'); shopEl.innerHTML='';
+  if(phase!=='buy') return;
+  for(const item of SHOP){
+    if(item.id==='ROW' && !(boardSize===6 || boardSize===8)) continue; // gate
+    const b=document.createElement('button');
+    b.className='small ghost';
+    b.textContent=`${item.label} — ${item.cost}c`;
+    b.onclick=()=> buy('player',item);
+    shopEl.appendChild(b);
+  }
+}
+function buy(who,item){
+  if(phase!=='buy') return;
+  if(coins[who] < item.cost) return;
+  if(item.gives.piece){ owned[who].push(item.gives.piece); inv[who].push(item.gives.piece); }
+  if(item.gives.time){ bonusTime[who]+=item.gives.time; }
+  if(item.gives.expand){ expandRows[who]+=item.gives.expand; }
+  coins[who]-=item.cost;
+  renderInv(); setHUD();
+}
+function sellFromInv(who,index){
+  if(phase!=='buy') return; // sell only in Buy
+  const p = inv[who][index];
+  /* Do not allow selling the King */
+  if(p === 'K') return;
+  const it = SHOP.find(s=>s.gives.piece===p);
+  const back = it ? it.half : 0;
+  if(back>=0){
+    const k = owned[who].indexOf(p);
+    if(k>=0) owned[who].splice(k,1);
+    inv[who].splice(index,1);
+    coins[who]+=back;
+  }
+  renderInv(); setHUD();
+}
+function renderInv(){
+  const invPlayerEl = document.getElementById('invPlayer');
+  const invAIEl = document.getElementById('invAI');
+
+  invPlayerEl.innerHTML='';
+  if(inv.player.length===0) invPlayerEl.innerHTML='<span class="muted">empty</span>';
+  inv.player.forEach((p,i)=>{
+    const it = SHOP.find(s=>s.gives.piece===p);
+    const half = it? it.half : 0;
+    const isKing = p==='K';
+    const pill = document.createElement('div'); pill.className='pill'; pill.dataset.piece=p;
+    /* Hide sell text for King; show for others in Buy */
+    pill.innerHTML = `<strong>${p}</strong>${(phase==='buy' && !isKing) ? ` <span class="muted">· sell ${half}c</span>`:''}`;
+    if(phase==='buy' && !isKing){
+      const bn=document.createElement('button'); bn.className='ghost small'; bn.textContent='Sell';
+      bn.onclick=(ev)=>{ ev.stopPropagation(); sellFromInv('player', i); };
+      pill.appendChild(bn);
+    } else {
+      pill.onclick=()=>{ if(phase==='placement') placing=p; };
+    }
+    invPlayerEl.appendChild(pill);
+  });
+
+  invAIEl.textContent = inv.ai.length ? inv.ai.join(' ') : 'empty';
+}
+
+/* ----------------- Board Rendering & Placement ----------------- */
+const boardEl = document.getElementById('board');
+function renderBoard(){
+  boardEl.style.gridTemplateColumns = `repeat(${boardSize},56px)`;
+  boardEl.style.gridTemplateRows = `repeat(${boardSize},56px)`;
+  boardEl.innerHTML='';
+  for(let y=0;y<boardSize;y++){
+    for(let x=0;x<boardSize;x++){
+      const d=document.createElement('div');
+      d.className='cell '+(((x+y)%2===0)?'light':'dark');
+      const p=board[y][x];
+      // move-trail (chess)
+      if(phase==='chess'){
+        const sq = file(x)+(y+1);
+        if(lastFrom===sq || lastTo===sq) d.classList.add('trail');
+      }
+
+      d.textContent=glyphFor(p);
+      // color lock by owner
+      d.style.color = p ? ((sideOf(p)==='w') ? '#222' : '#000') : '#111';
+
+      if(phase==='placement'){
+        // show BOTH sides' allowed rows, since it's visible placement now
+        const allowP=Math.min(2+expandRows.player, boardSize<=6?3:4);
+        const minY=boardSize-allowP;
+        if(y>=minY) d.style.outline='1px dashed rgba(16,185,129,.35)'; // player rows
+        const allowA=Math.min(2+expandRows.ai, boardSize<=6?3:4);
+        const maxY=allowA-1;
+        if(y<=maxY) d.style.boxShadow='inset 0 0 0 1px rgba(2,132,199,.25)'; // ai rows
+      }
+
+      if(selected && phase==='chess' && selected.x===x && selected.y===y) d.classList.add('sel');
+      d.onclick=()=>onCellClick(x,y);
+      boardEl.appendChild(d);
+    }
+  }
+  // show “CHECK!” if side to move is in check
+  showCheck(phase==='chess' && inCheck(turn));
+}
+
+function hasKingOwner(owner){
+  for(let y=0;y<boardSize;y++)for(let x=0;x<boardSize;x++){
+    const p=board[y][x]; if(p && p.type==='K' && p.owner===owner) return true;
+  }
+  return false;
+}
+function piecesOnBoard(owner){
+  let c=0; for(let y=0;y<boardSize;y++)for(let x=0;x<boardSize;x++){ const p=board[y][x]; if(p && p.owner===owner) c++; } return c;
+}
+function canPlaceAt(owner,x,y){
+  if(board[y][x]) return false;
+  const allow = Math.min(2+(owner==='player'?expandRows.player:expandRows.ai), boardSize<=6?3:4);
+  if(owner==='player'){ const minY=boardSize-allow; if(y<minY) return false; }
+  else { const maxY=allow-1; if(y>maxY) return false; }
+  if(piecesOnBoard(owner) >= cap) return false; // placement cap
+  return true;
+}
+
+/* Robust alternation: if current side cannot place or has no inventory, auto-switch */
+function advancePlacementTurnIfStuck(){
+  if(placementTurn==='player'){
+    if(inv.player.length===0 || !hasAnyPlacementSquare('player')){
+      placementTurn='ai'; placementQuota=1;
+      if(inv.ai.length>0) setTimeout(aiPlacementTurn, 50);
+    }
+  } else {
+    if(inv.ai.length===0 || !hasAnyPlacementSquare('ai')){
+      placementTurn='player'; placementQuota=1;
+    }
+  }
+}
+function hasAnyPlacementSquare(owner){
+  for(let y=0;y<boardSize;y++) for(let x=0;x<boardSize;x++){
+    if(canPlaceAt(owner,x,y)) return true;
+  }
+  return false;
+}
+
+function onCellClick(x,y){
+  if(phase==='placement' && placementTurn==='player'){
+    if(!placing){
+      // allow picking via clicking your already-placed piece to return it to inventory
+      const p=board[y][x];
+      if(p && p.owner==='player'){
+        inv.player.push(p.type); board[y][x]=null; renderInv(); renderBoard();
+      }
+      return;
+    }
+    if(placing==='K' && hasKingOwner('player')) return;
+    if(!canPlaceAt('player',x,y)) return;
+
+    // place
+    board[y][x]=makePiece('player', placing);
+    const idx=inv.player.indexOf(placing); if(idx>=0) inv.player.splice(idx,1);
+    placing=null; placementQuota--;
+    renderInv(); renderBoard();
+
+    if(placementQuota<=0){ placementTurn='ai'; placementQuota=1; setTimeout(aiPlacementTurn, 120); }
+    maybeEndPlacement();
+    return;
+  }
+
+  // CHESS interaction
+  if(phase==='chess' && turn==='w'){
+    const p=board[y][x];
+    if(selected){
+      const legal = legalMovesFor(selected.x, selected.y).find(m=>m.tx===x && m.ty===y);
+      if(legal){
+        const fromSq=file(selected.x)+(selected.y+1);
+        const toSq=file(x)+(y+1);
+        applyMove(legal);
+        lastFrom=fromSq; lastTo=toSq;
+
+        // Switch turn FIRST, then evaluate end state
+        turn='b'; pushRepetitionKey();
+        if(resolveEnd(true)) return; // true => last move was by the OTHER side
+        renderBoard();
+
+        setTimeout(aiMove, 140);
+      } else {
+        selected=null; renderBoard();
+      }
+    } else {
+      if(p && p.owner==='player'){ selected={x,y}; renderBoard(); }
+    }
+  }
+}
+
+/* Alternating placement logic */
+function startPlacementAlternation(){
+  // compute first-turn quota if uneven
+  const diff = inv.player.length - inv.ai.length;
+  placementTurn='player';              // white places first
+  placementQuota = diff>0 ? diff : 1;
+  if(diff<0){ placementTurn='ai'; placementQuota = -diff; setTimeout(aiPlacementTurn, 120); }
+  advancePlacementTurnIfStuck();
+}
+function aiPlacementTurn(){
+  // place up to placementQuota pieces
+  let tries=0;
+  while(placementTurn==='ai' && placementQuota>0 && inv.ai.length>0 && tries<64){
+    tries++;
+    const type = inv.ai[0];
+
+    // Prefer rows: pawns to 2nd row (y=1), others to back row (y=0). Fall back if needed.
+    const allow=Math.min(2+expandRows.ai, boardSize<=6?3:4);
+    const preferRows = [];
+    if(type==='P'){
+      if(allow>=2) preferRows.push(1);
+      preferRows.push(0);
+    } else {
+      preferRows.push(0);
+      if(allow>=2) preferRows.push(1);
+    }
+    // If expanded rows, add them next
+    for(let r=2; r<allow; r++) preferRows.push(r);
+
+    const pos = findAIPlacementSquareSmart(type, preferRows);
+    if(!pos){
+      // no square for this piece -> drop it for this round (prevents lock)
+      inv.ai.shift();
+      continue;
+    }
+    board[pos.y][pos.x] = makePiece('ai', type);
+    inv.ai.shift();
+    placementQuota--;
+  }
+
+  if(placementQuota<=0 || inv.ai.length===0){
+    placementTurn='player'; placementQuota=1;
+  }
+  renderInv(); renderBoard();
+  advancePlacementTurnIfStuck();
+  maybeEndPlacement();
+}
+
+function findAIPlacementSquareSmart(type, rowOrder){
+  // column priority: center-out
+  const cols=[...Array(boardSize).keys()].sort((a,b)=>Math.abs(a-(boardSize-1)/2)-Math.abs(b-(boardSize-1)/2));
+  for(const y of rowOrder){
+    for(const x of cols){
+      if(inBounds(x,y) && canPlaceAt('ai',x,y)) return {x,y};
+    }
+  }
+  // final fallback: any allowed
+  for(let y=0;y<boardSize;y++) for(let x=0;x<boardSize;x++){
+    if(canPlaceAt('ai',x,y)) return {x,y};
+  }
+  return null;
+}
+
+function maybeEndPlacement(){
+  if(inv.player.length===0 && inv.ai.length===0){
+    if(!hasKingOwner('player') || !hasKingOwner('ai')) return; // force kings
+    phase='chess'; showBanner('CHESS'); turn='w'; repMap.clear(); pushRepetitionKey();
+    lastFrom=lastTo=null; selected=null;
+    setHUD(); renderBoard();
+  }
+}
+
+/* ----------------- Rules Engine ----------------- */
+const DIRS = {
+  K:[[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]],
+  Q:[[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]],
+  R:[[1,0],[-1,0],[0,1],[0,-1]],
+  B:[[1,1],[-1,-1],[1,-1],[-1,1]],
+  N:[[2,1],[1,2],[-1,2],[-2,1],[-2,-1],[-1,-2],[1,-2],[2,-1]]
+};
+const SLIDERS = new Set(['Q','R','B']);
+function cloneBoard(){ return board.map(r=>r.map(c=> c?{owner:c.owner, type:c.type}:null )); }
+
+function genPseudoAt(x,y){
+  const p=board[y][x]; if(!p) return [];
+  const myC = sideOf(p);
+  const res=[];
+  if(p.type==='P'){
+    const dy = myC==='w' ? -1 : 1;
+    const y1 = y+dy;
+    if(inBounds(x,y1) && !board[y1][x]) res.push({x,y,tx:x,ty:y1});
+    for(const dx of [-1,1]){
+      const nx=x+dx, ny=y+dy;
+      if(inBounds(nx,ny) && board[ny][nx] && sideOf(board[ny][nx])!==myC) res.push({x,y,tx:nx,ty:ny});
+    }
+    return res;
+  }
+  const dirs=DIRS[p.type]||[];
+  for(const [dx,dy] of dirs){
+    let s=1;
+    while(true){
+      const nx=x+dx*s, ny=y+dy*s;
+      if(!inBounds(nx,ny)) break;
+      const t=board[ny][nx];
+      if(!t){ res.push({x,y,tx:nx,ty:ny}); }
+      else { if(sideOf(t)!==myC) res.push({x,y,tx:nx,ty:ny}); break; }
+      if(!SLIDERS.has(p.type)) break;
+      s++;
+    }
+  }
+  return res;
+}
+function isSquareAttacked(x,y,byColor){
+  for(let j=0;j<boardSize;j++)for(let i=0;i<boardSize;i++){
+    const p=board[j][i]; if(!p) continue;
+    if(sideOf(p)!==byColor) continue;
+    if(p.type==='P'){
+      const dy = (byColor==='w') ? -1 : 1;
+      for(const dx of [-1,1]){
+        const nx=i+dx, ny=j+dy;
+        if(nx===x && ny===y) return true;
+      }
+      continue;
+    }
+    const ms=genPseudoAt(i,j);
+    for(const m of ms){ if(m.tx===x && m.ty===y) return true; }
+  }
+  return false;
+}
+function kingPos(color){
+  for(let j=0;j<boardSize;j++)for(let i=0;i<boardSize;i++){
+    const p=board[j][i]; if(p && sideOf(p)===color && p.type==='K') return {x:i,y:j};
+  }
+  return null;
+}
+function legalMovesFor(x,y){
+  const p=board[y][x]; if(!p) return [];
+  const myC = sideOf(p);
+  const ms = genPseudoAt(x,y);
+  const out=[];
+  for(const m of ms){
+    const saved = cloneBoard();
+    const moved = board[y][x];
+    board[m.ty][m.tx]=moved; board[y][x]=null;
+    // promotion
+    if(board[m.ty][m.tx].type==='P'){
+      if( (sideOf(board[m.ty][m.tx])==='w' && m.ty===0) ||
+          (sideOf(board[m.ty][m.tx])==='b' && m.ty===boardSize-1) ){
+        board[m.ty][m.tx].type='Q';
+      }
+    }
+    const k=kingPos(myC);
+    const inC = k && isSquareAttacked(k.x,k.y, myC==='w'?'b':'w');
+    board = saved;
+    if(!inC) out.push(m);
+  }
+  return out;
+}
+function applyMove(m){
+  const p=board[m.y][m.x];
+  board[m.y][m.x]=null;
+  let newType=p.type;
+  const pc = sideOf(p);
+  if(p.type==='P' && ((pc==='w' && m.ty===0) || (pc==='b' && m.ty===boardSize-1))){
+    newType='Q';
+  }
+  board[m.ty][m.tx]=makePiece(p.owner, newType);
+  selected=null;
+}
+function allLegalMoves(color){
+  const res=[];
+  for(let j=0;j<boardSize;j++)for(let i=0;i<boardSize;i++){
+    const p=board[j][i]; if(!p) continue;
+    if(sideOf(p)!==color) continue;
+    const ms=legalMovesFor(i,j);
+    for(const m of ms) res.push(m);
+  }
+  return res;
+}
+function inCheck(color){
+  const k=kingPos(color);
+  return k ? isSquareAttacked(k.x,k.y, oppColor(color)) : false;
+}
+
+/* Insufficient material */
+function insufficientMaterial(){
+  let W={p:0,q:0,r:0,b:0,n:0}, B={p:0,q:0,r:0,b:0,n:0};
+  for(let y=0;y<boardSize;y++)for(let x=0;x<boardSize;x++){
+    const p=board[y][x]; if(!p) continue;
+    const s = (sideOf(p)==='w') ? W : B;
+    if(p.type==='P') s.p++; else if(p.type==='Q') s.q++; else if(p.type==='R') s.r++;
+    else if(p.type==='B') s.b++; else if(p.type==='N') s.n++;
+  }
+  const pawns=W.p+B.p, majors=W.q+W.r+B.q+B.r;
+  if(pawns>0 || majors>0) return false;
+  const wMin=W.b+W.n, bMin=B.b+B.n;
+  if(wMin===0&&bMin===0) return true;                 // K vs K
+  if((wMin===0&&bMin===1)||(bMin===0&&wMin===1)) return true; // K vs K+N/B
+  if(wMin===1&&bMin===1) return true;                 // minor vs minor
+  if((W.n===2&&wMin===2&&bMin===0)||(B.n===2&&bMin===2&&wMin===0)) return true; // KNN vs K
+  return false;
+}
+
+/* Threefold repetition */
+function positionKey(){
+  let s='';
+  for(let j=0;j<boardSize;j++){
+    for(let i=0;i<boardSize;i++){
+      const p=board[j][i];
+      s += p ? (sideOf(p)==='w'?p.type:p.type.toLowerCase()) : '.';
+    }
+    s+='|';
+  }
+  s += ':'+turn;
+  return s;
+}
+function pushRepetitionKey(){
+  const k=positionKey();
+  repMap.set(k, (repMap.get(k)||0)+1);
+}
+
+/* End conditions */
+function resolveEnd(movedByOtherSide=false){
+  // threefold first
+  for(const v of repMap.values()) if(v>=3){ onTie('threefold'); return true; }
+
+  const legal = allLegalMoves(turn);
+  const check = inCheck(turn);
+
+  if(legal.length===0){
+    if(check){ // checkmate
+      const winner = oppColor(turn);
+      sparklesBurst(); // distinct round-mate animation
+      onWin(winner==='w' ? 'player' : 'ai');
+    } else {
+      onTie('stalemate');
+    }
+    return true;
+  }
+  if(insufficientMaterial()){
+    onTie('insufficient material'); return true;
+  }
+  // Visual check prompt for current side to move
+  renderBoard();
+  return false;
+}
+
+/* ----------------- AI Spend/Place/Move ----------------- */
+function aiSpend(){
+  // rows only at 6×6 or 8×8
+  if((boardSize===6 || boardSize===8) && coins.ai>=2){ coins.ai-=2; expandRows.ai++; }
+  // buy priority
+  const pref=['R','N','B','P','P','Q'];
+  while(inv.ai.length < 18 && coins.ai>0){ // safety bound
+    let bought=false;
+    for(const t of pref){
+      const it=SHOP.find(s=>s.gives.piece===t);
+      if(it && coins.ai>=it.cost){ coins.ai-=it.cost; owned.ai.push(t); inv.ai.push(t); bought=true; break; }
+    }
+    if(!bought) break;
+  }
+}
+function aiMove(){
+  if(turn!=='b') return;
+  const moves = allLegalMoves('b');
+  if(moves.length===0){ if(resolveEnd(true)) return; return; }
+
+  let best=null, bestScore=-1e9;
+  const cx=(boardSize-1)/2, cy=(boardSize-1)/2;
+  for(const m of moves){
+    let sc=0;
+    const target=board[m.ty][m.tx];
+    if(target) sc += 10*PV[target.type];
+    sc += 0.25*(boardSize-(Math.abs(m.tx-cx)+Math.abs(m.ty-cy)));
+
+    const saved=cloneBoard(), savedTurn=turn;
+    applyMove(m); // make the move
+    // switch to player's turn for evaluation
+    turn='w';
+
+    if(inCheck('w')) sc += 1.2; // giving check bonus
+
+    // player's best reply: prioritize captures and mates
+    const replies = allLegalMoves('w');
+    let worst=0;
+    for(const r of replies){
+      const t=board[r.ty][r.tx];
+      let rs=0;
+      if(t && sideOf(t)==='b') rs += 10*PV[t.type]; // they capture us
+      const save2=cloneBoard(), t2=turn;
+      applyMove(r); turn='b';
+      if(allLegalMoves('b').length===0 && inCheck('b')) rs += 900; // we get mated
+      board=save2; turn=t2;
+      worst = Math.max(worst, rs);
+    }
+    sc -= 0.8*worst;
+
+    // if we already mated them, huge score
+    if(allLegalMoves('w').length===0 && inCheck('w')) sc += 1500;
+
+    board=saved; turn=savedTurn;
+    if(sc>bestScore){ bestScore=sc; best=m; }
+  }
+
+  if(!best) best = moves[(Math.random()*moves.length|0)];
+  const fromSq=file(best.x)+(best.y+1);
+  const toSq=file(best.tx)+(best.ty+1);
+
+  applyMove(best);
+  lastFrom=fromSq; lastTo=toSq;
+
+  // switch turn first, then evaluate end
+  turn='w'; pushRepetitionKey();
+  if(resolveEnd(true)) return;
+  renderBoard();
+}
+
+/* ----------------- Scoring & HP ----------------- */
+function confettiBurst(){
+  const c=document.getElementById('confetti');
+  for(let i=0;i<28;i++){
+    const s=document.createElement('span');
+    s.textContent = ['🎉','✨','🎊','⭐'][i%4];
+    s.style.left = (Math.random()*100)+'vw';
+    s.style.animationDelay = (Math.random()*0.2)+'s';
+    c.appendChild(s);
+    setTimeout(()=>c.removeChild(s), 1300);
+  }
+}
+function sparklesBurst(){
+  const c=document.getElementById('sparkles');
+  for(let i=0;i<22;i++){
+    const s=document.createElement('span');
+    s.textContent = ['✨','⭐','✴️','💫'][i%4];
+    s.style.left = (Math.random()*100)+'vw';
+    s.style.animationDelay = (Math.random()*0.15)+'s';
+    c.appendChild(s);
+    setTimeout(()=>c.removeChild(s), 1000);
+  }
+}
+function onWin(who){
+  const d = hpDeltas(roundIdx,'win');
+  if(who==='player'){
+    playerHP = Math.min(STARTING_HEALTH, playerHP + 1);
+    const loss = hpDeltas(roundIdx,'loss').l; aiHP = Math.max(0, aiHP + loss); // loss is negative
+  } else {
+    aiHP = Math.min(STARTING_HEALTH, aiHP + 1);
+    const loss = hpDeltas(roundIdx,'loss').l; playerHP = Math.max(0, playerHP + loss);
+  }
+  phase='results'; nextRound();
+}
+function onTie(){
+  const t = hpDeltas(roundIdx,'tie').t;
+  playerHP = Math.max(0, playerHP + t);
+  aiHP     = Math.max(0, aiHP + t);
+  phase='results'; nextRound();
+}
+
+/* ----------------- Phases ----------------- */
+const btnNext=document.getElementById('btnNext');
+const btnReset=document.getElementById('btnReset');
+btnNext.onclick=advance;
+btnReset.onclick=resetGame;
+
+function advance(){
+  if(phase==='buy'){
+    aiSpend();
+    phase='placement'; showBanner('PLACEMENT');
+    rebuildInventoryFromOwned(); // visible in placement
+    startPlacementAlternation();
+    repMap.clear(); pushRepetitionKey();
+    renderInv(); setHUD(); renderBoard();
+    return;
+  }
+  // placement ends automatically when both inventories are empty (maybeEndPlacement)
+}
+
+function nextRound(){
+  // game over?
+  if(playerHP<=0 || aiHP<=0){
+    confettiBurst(); // distinct game win
+    alert(`Game over — Winner: ${playerHP>aiHP?'PLAYER': (aiHP>playerHP?'AI':'TIE')}\n(You ${playerHP} HP · AI ${aiHP} HP)`);
+    return resetGame();
+  }
+  roundIdx=Math.min(roundIdx+1, ROUND_SIZES.length-1);
+  boardSize=ROUND_SIZES[roundIdx];
+  cap=capForRound(roundIdx);
+  coins.player += coinsForRound(roundIdx);
+  coins.ai     += coinsForRound(roundIdx);
+
+  resetSubBoard(boardSize);
+  rebuildInventoryFromOwned();
+
+  placing=null; selected=null; lastFrom=lastTo=null; turn='w';
+  phase='buy';
+  setHUD(); renderShop(); renderInv(); renderBoard();
+}
+
+function resetGame(){
+  roundIdx=0; boardSize=ROUND_SIZES[roundIdx];
+  playerHP=STARTING_HEALTH; aiHP=STARTING_HEALTH;
+  coins={player:5, ai:5};
+  owned={player:['K','P'], ai:['K','P']}; // First round: 1 King + 1 Pawn each
+  rebuildInventoryFromOwned();
+  expandRows={player:0, ai:0}; bonusTime={player:0, ai:0};
+  cap=capForRound(roundIdx);
+  resetSubBoard(boardSize);
+  placing=null; selected=null; lastFrom=lastTo=null; turn='w'; phase='buy'; repMap.clear();
+  setHUD(); renderShop(); renderInv(); renderBoard();
+}
+
+/* ----------------- Boot ----------------- */
+(function boot(){
+  resetGame(); // handles first render + shop
+})();
+
+/* ---------- Utilities for chess rendering ---------- */
+function file(c){ return 'abcdefgh'[c]; }
+</script>
+</body>
+</html>
